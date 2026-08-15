@@ -11,6 +11,16 @@ export default {
     }
 
     // Telegram teszt
+    if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID) {
+  return Response.json(
+    {
+      status: "error",
+      hasToken: Boolean(env.TELEGRAM_BOT_TOKEN),
+      hasChatId: Boolean(env.TELEGRAM_CHAT_ID)
+    },
+    { status: 500 }
+  );
+}
     if (request.method === "GET" && url.pathname === "/telegram-test") {
       try {
         const telegramUrl =
