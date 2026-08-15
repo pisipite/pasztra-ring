@@ -4,3 +4,9 @@
   "main": "src/index.js",
   "compatibility_date": "2026-08-15"
 }
+"kv_namespaces": [
+  {
+    "binding": "RING_STORE",
+    "id": "A_NAMESPACE_ID"
+  }
+]
