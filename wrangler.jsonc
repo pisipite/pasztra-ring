@@ -2,11 +2,12 @@
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "pasztra-ring",
   "main": "src/index.js",
-  "compatibility_date": "2026-08-15"
+  "compatibility_date": "2026-08-15",
+
+  "kv_namespaces": [
+    {
+      "binding": "RING_STORE",
+      "id": "439b015f2b8d4a6485ee67018a7ae377"
+    }
+  ]
 }
-"kv_namespaces": [
-  {
-    "binding": "RING_STORE",
-    "id": "A_NAMESPACE_ID"
-  }
-]
