@@ -9,5 +9,13 @@
       "binding": "RING_STORE",
       "id": "439b015f2b8d4a6485ee67018a7ae377"
     }
+  ],
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "pasztra-ring-db",
+      "database_id": "1ce68a58-386e-4f16-ba0f-8e53e5df9b48"
+    }
   ]
 }
