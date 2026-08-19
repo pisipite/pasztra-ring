@@ -23,6 +23,26 @@ export default {
       `);
     }
 
+    // Debug: utolsó Ring webhook
+    if (request.method === "GET" && url.pathname === "/debug/last-webhook") {
+      const authorized = await checkBasicAuth(request, env);
+
+      if (!authorized) {
+        return new Response("Authentication required", {
+          status: 401,
+          headers: {
+            "WWW-Authenticate": 'Basic realm="Pasztra Ring"'
+          }
+        });
+      }
+
+      const value = await env.RING_STORE.get("last_webhook");
+
+      return json({
+        last_webhook: value ? JSON.parse(value) : null
+      });
+    }
+
     // Biztonságos diagnosztika
     if (request.method === "GET" && url.pathname === "/health") {
       let db = false;
@@ -688,6 +708,17 @@ async function handleRingWebhook(
 
 
 async function processWebhook(payload, env) {
+
+  await env.RING_STORE.put(
+    "last_webhook",
+    JSON.stringify({
+      received_at: Date.now(),
+      type: payload?.data?.type || null,
+      subtype: payload?.data?.subType || null,
+      account_id: payload?.meta?.account_id || null,
+      device_id: payload?.data?.attributes?.source || null
+    })
+  );
 
   const requestId =
     payload?.meta?.request_id;
