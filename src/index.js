@@ -72,6 +72,73 @@ export default {
       });
     }
 
+    // Debug: Ring eszközök lekérése
+    if (request.method === "GET" && url.pathname === "/debug/devices") {
+      const authorized = await checkBasicAuth(request, env);
+
+      if (!authorized) {
+        return new Response("Authentication required", {
+          status: 401,
+          headers: {
+            "WWW-Authenticate": 'Basic realm="Pasztra Ring"'
+          }
+        });
+      }
+
+      const account = await env.DB.prepare(`
+        SELECT
+          account_id,
+          access_token,
+          refresh_token,
+          token_expires_at,
+          scope
+        FROM ring_accounts
+        WHERE status = 'completed'
+        LIMIT 1
+      `).first();
+
+      if (!account) {
+        return json({
+          ok: false,
+          error: "No completed Ring account in database"
+        }, 404);
+      }
+
+      const accessToken = await getValidAccessToken(env, account);
+
+      if (!accessToken) {
+        return json({
+          ok: false,
+          error: "Could not obtain valid Ring access token"
+        }, 502);
+      }
+
+      const response = await fetch(
+        `${RING_API}/v1/devices`,
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`
+          }
+        }
+      );
+
+      const body = await response.text();
+
+      let data;
+
+      try {
+        data = JSON.parse(body);
+      } catch {
+        data = body;
+      }
+
+      return json({
+        ok: response.ok,
+        status: response.status,
+        data
+      }, response.ok ? 200 : 502);
+    }
+
     // Ring backend ide küldi az OAuth authorization code-ot
     if (request.method === "POST" && url.pathname === "/ring/token") {
       return handleTokenExchange(request, env);
@@ -147,7 +214,6 @@ async function handleTokenExchange(request, env) {
     }, 502);
   }
 
-  // A Ring account ID-t külön API-hívással kell lekérni
   const profile = await getRingProfile(tokens.access_token);
 
   if (!profile?.data?.id) {
@@ -158,7 +224,6 @@ async function handleTokenExchange(request, env) {
   }
 
   const accountId = profile.data.id;
-
   const now = Date.now();
 
   const expiresAt =
@@ -257,7 +322,6 @@ async function extractAuthorizationCode(request) {
 
 async function getRingProfile(accessToken) {
   for (let i = 0; i < 3; i++) {
-
     const response = await fetch(
       `${RING_API}/v1/users/me`,
       {
@@ -395,7 +459,6 @@ function showLinkForm(url) {
 
 
 async function handleLinkForm(request, env) {
-
   if (
     !env.DB ||
     !env.RING_HMAC_KEY ||
@@ -422,7 +485,6 @@ async function handleLinkForm(request, env) {
   const time =
     String(form.get("time") || "");
 
-
   const usernameOK =
     await secureEqual(
       username,
@@ -435,14 +497,12 @@ async function handleLinkForm(request, env) {
       env.LINK_PASSWORD
     );
 
-
   if (!usernameOK || !passwordOK) {
     return html(`
       <h1>Sikertelen bejelentkezés</h1>
       <p>Hibás felhasználónév vagy jelszó.</p>
     `, 401);
   }
-
 
   const timestamp = Number(time);
   const age = Date.now() - timestamp;
@@ -459,10 +519,6 @@ async function handleLinkForm(request, env) {
     `, 400);
   }
 
-
-  // Keressük azt az unclaimed Ring-fiókot,
-  // amelynek Account ID-jával egyezik a nonce.
-
   const rows = await env.DB.prepare(`
     SELECT
       account_id,
@@ -470,18 +526,13 @@ async function handleLinkForm(request, env) {
       refresh_token,
       token_expires_at,
       scope
-
     FROM ring_accounts
-
     WHERE status = 'unclaimed'
   `).all();
 
-
   let matched = null;
 
-
   for (const row of rows.results || []) {
-
     const calculated =
       await calculateNonce(
         time,
@@ -495,7 +546,6 @@ async function handleLinkForm(request, env) {
     }
   }
 
-
   if (!matched) {
     return html(`
       <h1>Nem található Ring-fiók</h1>
@@ -503,13 +553,11 @@ async function handleLinkForm(request, env) {
     `, 400);
   }
 
-
   const accessToken =
     await getValidAccessToken(
       env,
       matched
     );
-
 
   if (!accessToken) {
     return html(`
@@ -517,7 +565,6 @@ async function handleLinkForm(request, env) {
       <p>Az összekapcsolást újra kell indítani.</p>
     `, 502);
   }
-
 
   const identifier =
     maskIdentifier(env.LINK_USERNAME);
@@ -528,26 +575,19 @@ async function handleLinkForm(request, env) {
     body.account_identifier = identifier;
   }
 
-
-  // 1. nonce visszaigazolása Ring felé
-
   const confirm = await fetch(
     `${RING_API}/v1/accounts/me/app-integrations`,
     {
       method: "POST",
-
       headers: {
         Authorization:
           `Bearer ${accessToken}`,
-
         "Content-Type":
           "application/json"
       },
-
       body: JSON.stringify(body)
     }
   );
-
 
   if (!confirm.ok) {
     return html(`
@@ -556,28 +596,21 @@ async function handleLinkForm(request, env) {
     `, 502);
   }
 
-
-  // 2. completed állapot kötelező
-
   const complete = await fetch(
     `${RING_API}/v1/accounts/me/app-integrations`,
     {
       method: "PATCH",
-
       headers: {
         Authorization:
           `Bearer ${accessToken}`,
-
         "Content-Type":
           "application/json"
       },
-
       body: JSON.stringify({
         status: "completed"
       })
     }
   );
-
 
   if (!complete.ok) {
     return html(`
@@ -586,20 +619,16 @@ async function handleLinkForm(request, env) {
     `, 502);
   }
 
-
   await env.DB.prepare(`
     UPDATE ring_accounts
-
     SET
       status = 'completed',
       updated_at = ?
-
     WHERE account_id = ?
   `).bind(
     Date.now(),
     matched.account_id
   ).run();
-
 
   return html(`
     <!doctype html>
@@ -646,7 +675,6 @@ async function handleRingWebhook(
   env,
   ctx
 ) {
-
   if (!env.RING_HMAC_KEY) {
     return json({
       ok: false,
@@ -654,16 +682,11 @@ async function handleRingWebhook(
     }, 500);
   }
 
-
-  // FONTOS: a nyers body alapján kell ellenőrizni
-  // a Ring HMAC aláírását.
-
   const rawBody =
     await request.arrayBuffer();
 
   const signature =
     request.headers.get("X-Signature") || "";
-
 
   const valid =
     await verifyWebhookSignature(
@@ -672,14 +695,12 @@ async function handleRingWebhook(
       env.RING_HMAC_KEY
     );
 
-
   if (!valid) {
     return json({
       ok: false,
       error: "Invalid signature"
     }, 401);
   }
-
 
   let payload;
 
@@ -694,21 +715,15 @@ async function handleRingWebhook(
     }, 400);
   }
 
-
-  // Gyorsan válaszolunk Ringnek,
-  // a feldolgozás a háttérben folytatódik.
-
   ctx.waitUntil(
     processWebhook(payload, env)
   );
-
 
   return json({ ok: true });
 }
 
 
 async function processWebhook(payload, env) {
-
   await env.RING_STORE.put(
     "last_webhook",
     JSON.stringify({
@@ -726,14 +741,10 @@ async function processWebhook(payload, env) {
   const type =
     payload?.data?.type;
 
-
-  // Duplikált webhookok szűrése
-
   if (
     requestId &&
     env.RING_STORE
   ) {
-
     const key =
       `webhook:${requestId}`;
 
@@ -741,7 +752,6 @@ async function processWebhook(payload, env) {
       await env.RING_STORE.get(key);
 
     if (exists) return;
-
 
     await env.RING_STORE.put(
       key,
@@ -752,7 +762,6 @@ async function processWebhook(payload, env) {
     );
   }
 
-
   if (type === "motion_detected") {
     await processMotion(
       payload,
@@ -762,19 +771,15 @@ async function processWebhook(payload, env) {
     return;
   }
 
-
   if (type === "app_integration_removed") {
-
     const accountId =
       payload?.meta?.account_id;
 
     if (accountId) {
-
       await env.DB.prepare(`
         DELETE FROM ring_accounts
         WHERE account_id = ?
       `).bind(accountId).run();
-
     }
   }
 }
@@ -785,7 +790,6 @@ async function processWebhook(payload, env) {
    ========================================================= */
 
 async function processMotion(payload, env) {
-
   const accountId =
     payload?.meta?.account_id;
 
@@ -800,7 +804,6 @@ async function processMotion(payload, env) {
   const subtype =
     payload?.data?.subType || "motion";
 
-
   if (
     !accountId ||
     !deviceId ||
@@ -808,7 +811,6 @@ async function processMotion(payload, env) {
   ) {
     return;
   }
-
 
   const account =
     await env.DB.prepare(`
@@ -818,17 +820,13 @@ async function processMotion(payload, env) {
         refresh_token,
         token_expires_at,
         scope
-
       FROM ring_accounts
-
       WHERE
         account_id = ?
         AND status = 'completed'
     `).bind(accountId).first();
 
-
   if (!account) return;
-
 
   const accessToken =
     await getValidAccessToken(
@@ -836,9 +834,7 @@ async function processMotion(payload, env) {
       account
     );
 
-
   if (!accessToken) return;
-
 
   const image =
     await downloadMotionImage(
@@ -847,31 +843,24 @@ async function processMotion(payload, env) {
       accessToken
     );
 
-
   const when =
     formatBudapestTime(timestamp);
-
 
   const caption =
     `🚨 Ring mozgás\n${when}\nTípus: ${subtype}`;
 
-
   if (image) {
-
     await sendTelegramPhoto(
       env,
       image.data,
       image.contentType,
       caption
     );
-
   } else {
-
     await sendTelegramMessage(
       env,
       `${caption}\nA kép nem volt elérhető.`
     );
-
   }
 }
 
@@ -881,15 +870,10 @@ async function downloadMotionImage(
   timestamp,
   accessToken
 ) {
-
   const url =
     `${RING_API}/v1/devices/` +
     `${encodeURIComponent(deviceId)}` +
     `/media/image/download`;
-
-
-  // Recording közvetlenül motion után
-  // még lehet feldolgozás alatt.
 
   const delays = [
     0,
@@ -898,60 +882,43 @@ async function downloadMotionImage(
     8000
   ];
 
-
   for (const delay of delays) {
-
     if (delay) {
       await sleep(delay);
     }
-
 
     const response =
       await fetch(
         url,
         {
           method: "POST",
-
           headers: {
             Authorization:
               `Bearer ${accessToken}`,
-
             "Content-Type":
               "application/json"
           },
-
           body: JSON.stringify({
             type: "at_timestamp",
-
             timestamp,
-
             image_options: {
               format: "jpeg"
             }
           }),
-
           redirect: "follow"
         }
       );
 
-
     if (response.ok) {
-
       return {
         data:
           await response.arrayBuffer(),
-
         contentType:
           response.headers.get(
             "content-type"
           ) || "image/jpeg"
       };
-
     }
-
-
-    // 425 = recording még nincs kész
-    // 5xx = ideiglenes szerverhiba
 
     if (
       response.status !== 425 &&
@@ -960,7 +927,6 @@ async function downloadMotionImage(
       return null;
     }
   }
-
 
   return null;
 }
@@ -974,54 +940,41 @@ async function getValidAccessToken(
   env,
   account
 ) {
-
-  // 5 perccel lejárat előtt frissítünk
-
   if (
     Date.now() <
     Number(account.token_expires_at) -
     300000
   ) {
-
     return account.access_token;
   }
-
 
   const response =
     await fetch(
       RING_OAUTH,
       {
         method: "POST",
-
         headers: {
           "Content-Type":
             "application/x-www-form-urlencoded"
         },
-
         body: new URLSearchParams({
           grant_type: "refresh_token",
-
           refresh_token:
             account.refresh_token,
-
           client_id:
             env.RING_CLIENT_ID,
-
           client_secret:
             env.RING_CLIENT_SECRET
         })
       }
     );
 
-
   if (!response.ok) {
     return null;
   }
 
-
   const tokens =
     await response.json();
-
 
   if (
     !tokens.access_token ||
@@ -1030,23 +983,19 @@ async function getValidAccessToken(
     return null;
   }
 
-
   const expiresAt =
     Date.now() +
     Number(tokens.expires_in || 14400) *
     1000;
 
-
   await env.DB.prepare(`
     UPDATE ring_accounts
-
     SET
       access_token = ?,
       refresh_token = ?,
       token_expires_at = ?,
       scope = ?,
       updated_at = ?
-
     WHERE account_id = ?
   `).bind(
     tokens.access_token,
@@ -1056,7 +1005,6 @@ async function getValidAccessToken(
     Date.now(),
     account.account_id
   ).run();
-
 
   return tokens.access_token;
 }
@@ -1072,22 +1020,18 @@ async function sendTelegramPhoto(
   contentType,
   caption
 ) {
-
   const form =
     new FormData();
-
 
   form.append(
     "chat_id",
     env.TELEGRAM_CHAT_ID
   );
 
-
   form.append(
     "caption",
     caption
   );
-
 
   form.append(
     "photo",
@@ -1097,7 +1041,6 @@ async function sendTelegramPhoto(
     ),
     "ring.jpg"
   );
-
 
   await fetch(
     `https://api.telegram.org/` +
@@ -1115,23 +1058,19 @@ async function sendTelegramMessage(
   env,
   text
 ) {
-
   await fetch(
     `https://api.telegram.org/` +
     `bot${env.TELEGRAM_BOT_TOKEN}` +
     `/sendMessage`,
     {
       method: "POST",
-
       headers: {
         "Content-Type":
           "application/json"
       },
-
       body: JSON.stringify({
         chat_id:
           env.TELEGRAM_CHAT_ID,
-
         text
       })
     }
@@ -1148,35 +1087,26 @@ async function calculateNonce(
   accountId,
   hmacKey
 ) {
-
   const key =
     await crypto.subtle.importKey(
       "raw",
-
       new TextEncoder()
         .encode(hmacKey),
-
       {
         name: "HMAC",
         hash: "SHA-256"
       },
-
       false,
-
       ["sign"]
     );
-
 
   const signature =
     await crypto.subtle.sign(
       "HMAC",
-
       key,
-
       new TextEncoder()
         .encode(`${time}:${accountId}`)
     );
-
 
   return base64UrlNoPadding(
     new Uint8Array(signature)
@@ -1189,29 +1119,22 @@ async function verifyWebhookSignature(
   receivedSignature,
   hmacKey
 ) {
-
   if (!receivedSignature) {
     return false;
   }
 
-
   const key =
     await crypto.subtle.importKey(
       "raw",
-
       new TextEncoder()
         .encode(hmacKey),
-
       {
         name: "HMAC",
         hash: "SHA-256"
       },
-
       false,
-
       ["sign"]
     );
-
 
   const signature =
     await crypto.subtle.sign(
@@ -1220,18 +1143,15 @@ async function verifyWebhookSignature(
       rawBody
     );
 
-
   const expected =
     bytesToHex(
       new Uint8Array(signature)
     );
 
-
   const received =
     receivedSignature
       .replace(/^sha256=/i, "")
       .toLowerCase();
-
 
   return secureEqual(
     expected.toLowerCase(),
@@ -1241,26 +1161,20 @@ async function verifyWebhookSignature(
 
 
 async function secureEqual(a, b) {
-
   const encoder =
     new TextEncoder();
 
-
   const [hashA, hashB] =
     await Promise.all([
-
       crypto.subtle.digest(
         "SHA-256",
         encoder.encode(String(a))
       ),
-
       crypto.subtle.digest(
         "SHA-256",
         encoder.encode(String(b))
       )
-
     ]);
-
 
   const A =
     new Uint8Array(hashA);
@@ -1268,20 +1182,15 @@ async function secureEqual(a, b) {
   const B =
     new Uint8Array(hashB);
 
-
   let diff = 0;
-
 
   for (
     let i = 0;
     i < A.length;
     i++
   ) {
-
     diff |= A[i] ^ B[i];
-
   }
-
 
   return diff === 0;
 }
@@ -1292,7 +1201,6 @@ async function secureEqual(a, b) {
    ========================================================= */
 
 function base64UrlNoPadding(bytes) {
-
   let binary = "";
 
   for (const byte of bytes) {
@@ -1308,7 +1216,6 @@ function base64UrlNoPadding(bytes) {
 
 
 function bytesToHex(bytes) {
-
   return Array.from(
     bytes,
     byte =>
@@ -1320,7 +1227,6 @@ function bytesToHex(bytes) {
 
 
 function maskIdentifier(value) {
-
   const text =
     String(value || "");
 
@@ -1331,36 +1237,30 @@ function maskIdentifier(value) {
     return null;
   }
 
-
   const local =
     text.slice(0, at);
 
   const domain =
     text.slice(at + 1);
 
-
   const masked =
     local.length <= 1
       ? "*"
       : `${local[0]}***${local[local.length - 1]}`;
-
 
   return `${masked}@${domain}`;
 }
 
 
 function formatBudapestTime(timestamp) {
-
   return new Intl.DateTimeFormat(
     "hu-HU",
     {
       timeZone:
         "Europe/Budapest",
-
       year: "numeric",
       month: "2-digit",
       day: "2-digit",
-
       hour: "2-digit",
       minute: "2-digit",
       second: "2-digit"
@@ -1372,29 +1272,23 @@ function formatBudapestTime(timestamp) {
 
 
 function escapeHtml(value) {
-
   return String(value)
-
     .replaceAll(
       "&",
       "&amp;"
     )
-
     .replaceAll(
       "<",
       "&lt;"
     )
-
     .replaceAll(
       ">",
       "&gt;"
     )
-
     .replaceAll(
       "\"",
       "&quot;"
     )
-
     .replaceAll(
       "'",
       "&#039;"
@@ -1411,12 +1305,10 @@ function sleep(ms) {
 
 
 function json(data, status = 200) {
-
   return new Response(
     JSON.stringify(data),
     {
       status,
-
       headers: {
         "Content-Type":
           "application/json; charset=utf-8"
@@ -1427,22 +1319,21 @@ function json(data, status = 200) {
 
 
 function html(body, status = 200) {
-
   return new Response(
     body,
     {
       status,
-
       headers: {
         "Content-Type":
           "text/html; charset=utf-8",
-
         "Cache-Control":
           "no-store"
       }
     }
   );
 }
+
+
 async function checkBasicAuth(request, env) {
   const header =
     request.headers.get("Authorization") || "";
