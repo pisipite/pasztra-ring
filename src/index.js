@@ -1443,3 +1443,46 @@ function html(body, status = 200) {
     }
   );
 }
+async function checkBasicAuth(request, env) {
+  const header =
+    request.headers.get("Authorization") || "";
+
+  if (!header.startsWith("Basic ")) {
+    return false;
+  }
+
+  try {
+    const decoded =
+      atob(header.slice(6));
+
+    const separator =
+      decoded.indexOf(":");
+
+    if (separator < 0) {
+      return false;
+    }
+
+    const username =
+      decoded.slice(0, separator);
+
+    const password =
+      decoded.slice(separator + 1);
+
+    const usernameOK =
+      await secureEqual(
+        username,
+        env.LINK_USERNAME
+      );
+
+    const passwordOK =
+      await secureEqual(
+        password,
+        env.LINK_PASSWORD
+      );
+
+    return usernameOK && passwordOK;
+
+  } catch {
+    return false;
+  }
+}
